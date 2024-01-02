@@ -1,0 +1,92 @@
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Disable swap
+  shell: swapoff -a
+  register: __cmd_res
+  changed_when: __cmd_res.rc != 0
+
+- name: Remove SWAP in fstab
+  lineinfile:
+    path: /etc/fstab
+    regexp: '^/swap '
+    line: '#/swap '
+
+- name: Install containerd
+  apt:
+    name: containerd
+    state: present
+
+- name: Create containerd config directory before
+  file:
+    path: /etc/containerd
+    state: directory
+
+- name: Get checksum of containerd configuration
+  stat:
+    path: /etc/containerd/config.toml
+  register: __containerd_toml_checksum_before
+
+- name: Generate containerd config file
+  shell: containerd config default
+  register: __containerd_config
+  changed_when: __containerd_config.rc != 0
+
+- name: Save containerd config file
+  copy:
+    content: "{{ __containerd_config.stdout }}"
+    dest: /etc/containerd/config.toml
+  changed_when: __containerd_config.rc != 0
+
+- name: Change cgroup conf
+  lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: '^(.*)SystemdCgroup = false(.*)$'
+    line: '\1SystemdCgroup = true\2'
+    backrefs: yes
+  changed_when: False
+
+- name: Get checksum of containerd configuration after
+  stat:
+    path: /etc/containerd/config.toml
+  register: __containerd_toml_checksum_after
+
+- name: Restart containerd if needed
+  service:
+    name: containerd
+    state: restarted
+    enabled: yes
+  when: __containerd_toml_checksum_after.stat.checksum != __containerd_toml_checksum_before.stat.checksum
+
+- name: Check if containerd file exists
+  stat:
+    path: /etc/modules-load.d/containerd.conf
+  register: __containerd_conf_exists
+
+- name: Add containerd modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Create containerd.conf file if not exist
+  copy:
+    dest: /etc/modules-load.d/containerd.conf
+    content: |
+      overlay
+      br_netfilter
+  when: not __containerd_conf_exists.stat.exists
+  notify: restart_containerd
+
+- ansible.builtin.meta: flush_handlers
+
+- name: Ensure containerd is started
+  service:
+    name: containerd
+    state: started
+    enabled: yes
