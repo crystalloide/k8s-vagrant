@@ -1,0 +1,10 @@
+- name: install kubernetes cluster
+  hosts: all
+  become: true
+  serial: 1
+  roles:
+  - roles/kubernetes
+  vars:
+    kubeadm_init_master: kubm1
+    kubeadm_master_group_name: k8s-masters
+    kubeadm_worker_group_name: k8s-workers
